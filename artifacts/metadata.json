@@ -1,0 +1,155 @@
+{
+  "trained_at_utc": "2026-10-03T15:02:49+00:00",
+  "training_duration_seconds": 42.281108,
+  "quick_mode": false,
+  "data_range": [
+    "1996-01-03",
+    "2026-10-02"
+  ],
+  "n_rows_total": 7717,
+  "split_dates": {
+    "train": [
+      "1996-02-01",
+      "2010-10-18"
+    ],
+    "validation": [
+      "2010-10-19",
+      "2014-06-24"
+    ],
+    "test": [
+      "2014-06-25",
+      "2026-10-02"
+    ]
+  },
+  "feature_columns": [
+    "Oil_ret_lag1",
+    "USD_ret_lag1",
+    "FedRate_chg_lag1",
+    "Term_chg_lag1",
+    "Credit_chg_lag1",
+    "InflMom_lag1",
+    "IP_growth_lag1",
+    "Unemp_lag1",
+    "GPR_lag1",
+    "Mom_1Y_lag1",
+    "Mom_1M_lag1",
+    "RSI_lag1",
+    "SMA_200_Dist_lag1",
+    "VIX_lag1",
+    "VIX_chg_lag1",
+    "IVOL_lag1",
+    "RealVol_lag1",
+    "RealVol_5d_lag1",
+    "Regime_prob_lag1",
+    "Regime_bin_lag1",
+    "Ret_lag1",
+    "Ret_lag2",
+    "Ret_lag5"
+  ],
+  "rf_best_mtry": 4,
+  "xgb_best_params": {
+    "objective": "reg:squarederror",
+    "max_depth": 4,
+    "eta": 0.1,
+    "subsample": 0.7,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 5,
+    "gamma": 0.1,
+    "lambda": 1,
+    "seed": 123
+  },
+  "xgb_best_n_rounds": 8,
+  "ensemble_weights": {
+    "rf": 0.34,
+    "xgb": 0.05,
+    "lstm": 0.61
+  },
+  "test_period_metrics": {
+    "Buy-and-Hold": {
+      "annualised_sharpe": 0.6366936747760961,
+      "total_net_return_pct": 135.70476234114642,
+      "max_drawdown_pct": -36.1026397523849,
+      "directional_accuracy_pct": null,
+      "sortino": null,
+      "calmar": null,
+      "pct_time_long": null,
+      "pct_time_short": null
+    },
+    "Random Forest": {
+      "directional_accuracy_pct": 56.784083496412265,
+      "annualised_sharpe": 1.5737895672518853,
+      "sortino": 2.1998260772177547,
+      "calmar": 0.7303153261420404,
+      "total_net_return_pct": 334.1611032340787,
+      "buy_and_hold_return_pct": 135.70476234114642,
+      "max_drawdown_pct": -37.6074486911204,
+      "pct_time_long": 62.720156555773,
+      "pct_time_short": 37.279843444227005
+    },
+    "XGBoost": {
+      "directional_accuracy_pct": 54.696673189823876,
+      "annualised_sharpe": 1.0803592585175246,
+      "sortino": 1.3393588356264228,
+      "calmar": 0.483995800634172,
+      "total_net_return_pct": 229.7018999814966,
+      "buy_and_hold_return_pct": 135.70476234114642,
+      "max_drawdown_pct": -39.007793441429875,
+      "pct_time_long": 83.59425962165689,
+      "pct_time_short": 16.40574037834312
+    },
+    "LSTM": {
+      "directional_accuracy_pct": 52.08741030658839,
+      "annualised_sharpe": 0.18064185311171516,
+      "sortino": 0.22439219612589995,
+      "calmar": 0.07027656669404427,
+      "total_net_return_pct": 38.53063161331105,
+      "buy_and_hold_return_pct": 135.70476234114642,
+      "max_drawdown_pct": -45.06340274530948,
+      "pct_time_long": 64.7423352902805,
+      "pct_time_short": 35.257664709719506
+    },
+    "LSTM + Regime": {
+      "directional_accuracy_pct": 52.08741030658839,
+      "annualised_sharpe": 0.18064185311171516,
+      "sortino": 0.22439219612589995,
+      "calmar": 0.07027656669404427,
+      "total_net_return_pct": 38.53063161331105,
+      "buy_and_hold_return_pct": 135.70476234114642,
+      "max_drawdown_pct": -45.06340274530948,
+      "pct_time_long": 64.7423352902805,
+      "pct_time_short": 35.257664709719506
+    },
+    "Ensemble": {
+      "directional_accuracy_pct": 56.16438356164384,
+      "annualised_sharpe": 1.445751053669507,
+      "sortino": 1.8677176293984343,
+      "calmar": 0.5775483941954298,
+      "total_net_return_pct": 307.11053841287634,
+      "buy_and_hold_return_pct": 135.70476234114642,
+      "max_drawdown_pct": -43.705362728081575,
+      "pct_time_long": 66.21004566210046,
+      "pct_time_short": 33.789954337899545
+    }
+  },
+  "thesis_reference_weights": {
+    "rf": 0.38,
+    "xgb": 0.04,
+    "lstm": 0.58
+  },
+  "thesis_reference_metrics": {
+    "sharpe": 1.268,
+    "net_return_pct": 262.95,
+    "max_drawdown_pct": -28.16,
+    "directional_accuracy_pct": 53.8,
+    "test_period": "2014-01-01 to 2025-12-31"
+  },
+  "regime_stats": {
+    "calm_pct": 70.10855518221763,
+    "crisis_pct": 29.89144481778237,
+    "calm_mean_return": 0.08650179333746065,
+    "crisis_mean_return": -0.09389090019373787,
+    "calm_vol": 0.7098863869455521,
+    "crisis_vol": 1.8954818187199571,
+    "nber_match_rate_pct": 19.628188499783832
+  }
+}

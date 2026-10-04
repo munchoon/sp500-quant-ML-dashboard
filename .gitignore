@@ -1,0 +1,28 @@
+# Secrets — NEVER commit these
+.streamlit/secrets.toml
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# The raw data cache is large and fully regenerable — never commit it.
+# (train_models.py rebuilds it automatically on the next run if missing.)
+artifacts/daily_dataset_cache.parquet
+
+# Trained artifacts ARE committed by default (see README "Deployment") since
+# Streamlit Cloud / HF Spaces have no way to run train_models.py themselves.
+# If you'd rather keep them out of git (e.g. using Git LFS or an external
+# store instead), uncomment the next line:
+# artifacts/*.joblib
+# artifacts/*.json
+# artifacts/*.keras
+# artifacts/*.npz
+# artifacts/*.parquet
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
