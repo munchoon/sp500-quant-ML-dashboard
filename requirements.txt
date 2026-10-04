@@ -22,8 +22,11 @@ statsmodels>=0.14          # available for auxiliary diagnostics
 # Machine learning
 scikit-learn>=1.4
 xgboost>=2.0
-tensorflow-cpu>=2.16,<3.0  # LSTM. CPU build keeps the install lean —
-                             # no GPU is needed or used anywhere in this app.
+onnxruntime>=1.23            # LSTM inference (ONNX export of the trained .keras
+                             # model — numerically identical, no TensorFlow needed).
+                             # Training (train_models.py) still needs TensorFlow
+                             # locally: pip install "tensorflow==2.20.0" (Intel/
+                             # Linux) or "tensorflow-macos" (Apple Silicon).
 shap>=0.45
 
 # Utilities

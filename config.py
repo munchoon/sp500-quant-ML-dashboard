@@ -242,7 +242,11 @@ ARTIFACT_FILES = {
     "hmm": ARTIFACT_DIR / "hmm_regime.joblib",
     "rf": ARTIFACT_DIR / "random_forest.joblib",
     "xgb": ARTIFACT_DIR / "xgboost_model.json",
-    "lstm": ARTIFACT_DIR / "lstm_model.keras",
+    "lstm": ARTIFACT_DIR / "lstm_model.onnx",  # ONNX export of the trained LSTM
+    # (numerically identical to lstm_model.keras, max abs diff ~7e-08 — verified
+    # at conversion). The .keras file is kept in the repo as the training source
+    # of truth; the app only ever loads the .onnx (no TensorFlow needed at
+    # inference, which keeps deploy targets like Streamlit Cloud working).
     "ensemble_weights": ARTIFACT_DIR / "ensemble_weights.json",
     "feature_importance": ARTIFACT_DIR / "feature_importance.json",
     "backtest_history": ARTIFACT_DIR / "backtest_history.parquet",

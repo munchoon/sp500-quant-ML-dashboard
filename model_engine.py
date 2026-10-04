@@ -21,6 +21,7 @@ from typing import Optional
 
 import joblib
 import numpy as np
+import onnxruntime as ort
 import pandas as pd
 import xgboost as xgb
 
@@ -64,7 +65,8 @@ class ModelEngine:
         self.regime: Optional[regime_model.RegimeModel] = None
         self.rf = None
         self.xgb_booster: Optional[xgb.Booster] = None
-        self.lstm = None
+        self.lstm_session = None
+        self.lstm_input_name: Optional[str] = None
         self.weights: Optional[dict] = None
         self.metadata: Optional[dict] = None
         self.feature_importance_df: Optional[pd.DataFrame] = None
@@ -75,14 +77,16 @@ class ModelEngine:
     # ── Loading ─────────────────────────────────────────────────────────
     def load(self) -> "ModelEngine":
         import json
-        from tensorflow import keras
 
         self.scaler = ml_models.FeatureScaler.load(config.ARTIFACT_FILES["scaler"])
         self.regime = regime_model.RegimeModel.load(config.ARTIFACT_FILES["hmm"])
         self.rf = joblib.load(config.ARTIFACT_FILES["rf"])
         self.xgb_booster = xgb.Booster()
         self.xgb_booster.load_model(str(config.ARTIFACT_FILES["xgb"]))
-        self.lstm = keras.models.load_model(config.ARTIFACT_FILES["lstm"])
+        # ONNX inference — no TensorFlow required (see config.ARTIFACT_FILES["lstm"]).
+        self.lstm_session = ort.InferenceSession(
+            str(config.ARTIFACT_FILES["lstm"]), providers=["CPUExecutionProvider"])
+        self.lstm_input_name = self.lstm_session.get_inputs()[0].name
 
         with open(config.ARTIFACT_FILES["ensemble_weights"]) as f:
             self.weights = json.load(f)
@@ -136,7 +140,7 @@ class ModelEngine:
         pred_rf = float(self.rf.predict(scaled_row)[0])
         pred_xgb = float(self.xgb_booster.predict(xgb.DMatrix(scaled_row))[0])
         lstm_input = scaled_seq.to_numpy().reshape(1, config.LSTM_SEQ_LEN, len(self.feature_cols)).astype(np.float32)
-        pred_lstm_raw = float(self.lstm.predict(lstm_input, verbose=0).ravel()[0])
+        pred_lstm_raw = float(self.lstm_session.run(None, {self.lstm_input_name: lstm_input})[0].ravel()[0])
 
         current_regime_prob = float(live_row["Regime_prob_lag1"])
         pred_lstm_regime = float(ml_models.regime_scale(
