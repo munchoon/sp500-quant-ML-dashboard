@@ -235,26 +235,34 @@ test_metrics = engine.get_test_period_metrics()
 ens = test_metrics["Ensemble"]
 
 # ── Previous completed session: what the model called vs. what happened ──
-# Backtest rows are dated by session: Pred_Ensemble was made *before* that
-# session from lagged features, Actual_Return is the realised outcome.
-_prev = engine.backtest_df.iloc[-1] if len(engine.backtest_df) else None
-if _prev is not None:
+# Live-computed every page load (signal.previous, scored from data through
+# T-1 with the identical code path as today's signal), so it rolls forward
+# daily with no retraining. Falls back to the frozen training backtest tail
+# only if live inference failed this session.
+_pr = signal.previous if signal is not None else None
+if _pr is not None:
+    _prev_sig, _prev_pred, _prev_conf = _pr.signal, _pr.predicted_return_pct, _pr.confidence_pct
+    _prev_actual, _prev_hit = _pr.actual_return_pct, _pr.hit
+    _prev_date, _prev_close, _prev_live = _pr.session_date, _pr.sp500_close, True
+    _prev = True
+else:
+    _prev = engine.backtest_df.iloc[-1] if len(engine.backtest_df) else None
+    _prev_live = False
+if _prev is not None and not _prev_live:
     _prev_pred = float(_prev["Pred_Ensemble"])
     _prev_sig = "Long" if _prev_pred > 0 else "Short"
     _prev_actual = float(_prev["Actual_Return"])
     _prev_hit = (_prev_pred > 0) == (_prev_actual > 0)
     _prev_date = engine.backtest_df.index[-1]
     _prev_close = float(_prev["SP500_Close"])
-    # Same confidence definition as the live signal (ModelEngine._confidence_score):
-    # 50% component agreement + 50% prediction-magnitude percentile vs history.
     _prev_comp_sigs = [float(_prev[c]) > 0 for c in ("Pred_RF", "Pred_XGB", "Pred_LSTM_Regime")]
     _prev_agree = float(sum(1 for s in _prev_comp_sigs if ("Long" if s else "Short") == _prev_sig) / 3 * 100)
     _prev_ref = engine.backtest_df["Pred_Ensemble"].abs()
     _prev_mag = float((_prev_ref < abs(_prev_pred)).mean() * 100) if len(_prev_ref) else 50.0
     _prev_conf = float(min(100, max(0, 0.5 * _prev_agree + 0.5 * _prev_mag)))
-else:
-    _prev_pred, _prev_sig, _prev_actual, _prev_hit, _prev_date, _prev_close = 0.0, "—", 0.0, False, None, 0.0
-    _prev_conf = 0.0
+elif _prev is None:
+    _prev_sig, _prev_pred, _prev_conf = "—", 0.0, 0.0
+    _prev_actual, _prev_hit, _prev_date, _prev_close = 0.0, False, None, 0.0
 
 k1, k2, k3, k4 = st.columns(4)
 with k1:
@@ -272,7 +280,8 @@ with k2:
 with k3:
     if _prev is not None:
         kpi_card("Previous call — model predicted", signal_badge(_prev_sig),
-                  f"{_prev_date.date()} · pred {_prev_pred:+.4f}% · confidence {_prev_conf:.0f}%")
+                  f"{_prev_date.date()} · pred {_prev_pred:+.4f}% · confidence {_prev_conf:.0f}%"
+                  + (" · live" if _prev_live else " · backtest"))
     else:
         kpi_card("Previous call — model predicted", "—", "unavailable")
 with k4:

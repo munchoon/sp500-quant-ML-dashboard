@@ -43,6 +43,23 @@ class ComponentPrediction:
 
 
 @dataclass
+class PreviousSessionReview:
+    """What the model called for the last completed session vs. what happened.
+
+    Recomputed live on every page load from the truncated data frame (data
+    through T-1 scored with the identical code path as today's signal), so
+    this card rolls forward daily with no retraining — unlike the frozen
+    training backtest."""
+    session_date: pd.Timestamp       # the completed session being reviewed
+    sp500_close: float
+    predicted_return_pct: float
+    signal: str                      # "Long" | "Short"
+    confidence_pct: float
+    actual_return_pct: float
+    hit: bool
+
+
+@dataclass
 class LiveSignal:
     as_of_date: pd.Timestamp          # most recent session used as input
     target_session_label: str          # human label, e.g. "next trading session"
@@ -57,6 +74,7 @@ class LiveSignal:
     var_es: list[risk_metrics.VarEsResult]
     shap_today: Optional[dict] = field(default=None)  # {feature: shap_value}
     warnings: list[str] = field(default_factory=list)
+    previous: Optional[PreviousSessionReview] = field(default=None)
 
 
 class ModelEngine:
@@ -126,14 +144,11 @@ class ModelEngine:
         return data_fetcher.add_regime_features(base_df, prob_crisis, is_crisis)
 
     # ── Inference ────────────────────────────────────────────────────────
-    def predict_today(self) -> LiveSignal:
-        warnings: list[str] = []
-        df_with_regime = self.fetch_live_dataset()
-
-        live_row = data_fetcher.build_live_feature_row(df_with_regime, self.feature_cols)
-        lstm_window = data_fetcher.build_live_lstm_sequence(df_with_regime, self.feature_cols)
-        as_of_date = df_with_regime.index.max()
-
+    def _score_frame(self, live_row: pd.Series, lstm_window: pd.DataFrame,
+                     regime_prob: float) -> tuple[float, list[ComponentPrediction]]:
+        """Run RF/XGB/LSTM + ensemble weighting on one feature frame. Shared
+        by today's signal and the previous-session review so both use the
+        identical code path."""
         scaled_row = self.scaler.transform(live_row.to_frame().T)
         scaled_seq = self.scaler.transform(lstm_window)
 
@@ -142,13 +157,11 @@ class ModelEngine:
         lstm_input = scaled_seq.to_numpy().reshape(1, config.LSTM_SEQ_LEN, len(self.feature_cols)).astype(np.float32)
         pred_lstm_raw = float(self.lstm_session.run(None, {self.lstm_input_name: lstm_input})[0].ravel()[0])
 
-        current_regime_prob = float(live_row["Regime_prob_lag1"])
         pred_lstm_regime = float(ml_models.regime_scale(
-            np.array([pred_lstm_raw]), np.array([current_regime_prob]))[0])
+            np.array([pred_lstm_raw]), np.array([regime_prob]))[0])
 
         w = self.weights
         ensemble_pred = w["rf"] * pred_rf + w["xgb"] * pred_xgb + w["lstm"] * pred_lstm_regime
-        signal = "Long" if ensemble_pred > 0 else "Short"
 
         components = [
             ComponentPrediction("Random Forest", pred_rf, w["rf"], "Long" if pred_rf > 0 else "Short"),
@@ -156,6 +169,48 @@ class ModelEngine:
             ComponentPrediction("LSTM (regime-scaled)", pred_lstm_regime, w["lstm"],
                                  "Long" if pred_lstm_regime > 0 else "Short"),
         ]
+        return ensemble_pred, components
+
+    def _review_previous_session(self, df_with_regime: pd.DataFrame) -> Optional[PreviousSessionReview]:
+        """Score the frame ending the day BEFORE the last completed session —
+        i.e. what the model called for the session that just closed — and pair
+        it with the realised outcome. Returns None (caller falls back to the
+        frozen backtest tail) if history is too short."""
+        try:
+            if len(df_with_regime.index) < 2:
+                return None
+            session_date = df_with_regime.index.max()
+            trunc = df_with_regime.iloc[:-1]
+            live_row = data_fetcher.build_live_feature_row(trunc, self.feature_cols)
+            lstm_window = data_fetcher.build_live_lstm_sequence(trunc, self.feature_cols)
+            regime_prob = float(live_row["Regime_prob_lag1"])
+            ensemble_pred, components = self._score_frame(live_row, lstm_window, regime_prob)
+            actual = float(df_with_regime["SP500_ret"].iloc[-1])
+            sig = "Long" if ensemble_pred > 0 else "Short"
+            return PreviousSessionReview(
+                session_date=session_date,
+                sp500_close=float(df_with_regime["SP500"].iloc[-1]),
+                predicted_return_pct=ensemble_pred,
+                signal=sig,
+                confidence_pct=self._confidence_score(ensemble_pred, components),
+                actual_return_pct=actual,
+                hit=(ensemble_pred > 0) == (actual > 0),
+            )
+        except Exception as exc:
+            logger.warning("Previous-session review failed (%s); dashboard falls back to backtest.", exc)
+            return None
+
+    def predict_today(self) -> LiveSignal:
+        warnings: list[str] = []
+        df_with_regime = self.fetch_live_dataset()
+
+        live_row = data_fetcher.build_live_feature_row(df_with_regime, self.feature_cols)
+        lstm_window = data_fetcher.build_live_lstm_sequence(df_with_regime, self.feature_cols)
+        as_of_date = df_with_regime.index.max()
+
+        current_regime_prob = float(live_row["Regime_prob_lag1"])
+        ensemble_pred, components = self._score_frame(live_row, lstm_window, current_regime_prob)
+        signal = "Long" if ensemble_pred > 0 else "Short"
 
         confidence_pct = self._confidence_score(ensemble_pred, components)
 
@@ -178,12 +233,15 @@ class ModelEngine:
         shap_today = None
         try:
             import shap
+            scaled_row = self.scaler.transform(live_row.to_frame().T)
             explainer = shap.TreeExplainer(self.xgb_booster)
             vals = explainer.shap_values(scaled_row)
             shap_today = dict(zip(self.feature_cols, np.ravel(vals).tolist()))
         except Exception as exc:
             logger.warning("Live SHAP computation failed: %s", exc)
             warnings.append("Live SHAP explanation unavailable this run.")
+
+        previous = self._review_previous_session(df_with_regime)
 
         return LiveSignal(
             as_of_date=as_of_date,
@@ -199,6 +257,7 @@ class ModelEngine:
             var_es=var_es,
             shap_today=shap_today,
             warnings=warnings,
+            previous=previous,
         )
 
     def _confidence_score(self, ensemble_pred: float, components: list[ComponentPrediction]) -> float:
