@@ -171,14 +171,15 @@ class ModelEngine:
         ]
         return ensemble_pred, components
 
-    def _review_previous_session(self, df_with_regime: pd.DataFrame) -> Optional[PreviousSessionReview]:
+    def _review_previous_session(self, df_with_regime: pd.DataFrame) -> tuple[Optional[PreviousSessionReview], Optional[str]]:
         """Score the frame ending the day BEFORE the last completed session —
         i.e. what the model called for the session that just closed — and pair
-        it with the realised outcome. Returns None (caller falls back to the
-        frozen backtest tail) if history is too short."""
+        it with the realised outcome. Returns (review, error): error is None
+        on success; the caller shows the error and falls back to the frozen
+        backtest tail otherwise."""
         try:
             if len(df_with_regime.index) < 2:
-                return None
+                return None, "not enough live history (need 2+ sessions)"
             session_date = df_with_regime.index.max()
             trunc = df_with_regime.iloc[:-1]
             live_row = data_fetcher.build_live_feature_row(trunc, self.feature_cols)
@@ -195,10 +196,10 @@ class ModelEngine:
                 confidence_pct=self._confidence_score(ensemble_pred, components),
                 actual_return_pct=actual,
                 hit=(ensemble_pred > 0) == (actual > 0),
-            )
+            ), None
         except Exception as exc:
             logger.warning("Previous-session review failed (%s); dashboard falls back to backtest.", exc)
-            return None
+            return None, f"{type(exc).__name__}: {exc}"
 
     def predict_today(self) -> LiveSignal:
         warnings: list[str] = []
@@ -241,7 +242,9 @@ class ModelEngine:
             logger.warning("Live SHAP computation failed: %s", exc)
             warnings.append("Live SHAP explanation unavailable this run.")
 
-        previous = self._review_previous_session(df_with_regime)
+        previous, previous_error = self._review_previous_session(df_with_regime)
+        if previous_error:
+            warnings.append(f"Previous-session review unavailable this run ({previous_error}) — showing backtest tail.")
 
         return LiveSignal(
             as_of_date=as_of_date,
