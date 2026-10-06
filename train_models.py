@@ -214,7 +214,23 @@ def main(quick: bool, refresh_data: bool):
     import joblib
     joblib.dump(rf, config.ARTIFACT_FILES["rf"])
     booster.save_model(str(config.ARTIFACT_FILES["xgb"]))
-    lstm.save(config.ARTIFACT_FILES["lstm"])
+    # Save the native Keras model (training source of truth), then export the
+    # ONNX copy the app loads (config.ARTIFACT_FILES["lstm"] points at .onnx —
+    # keras .save() rejects non-.keras/.h5 paths, hence the two-step save).
+    lstm_keras_path = str(config.ARTIFACT_FILES["lstm"]).replace(".onnx", ".keras")
+    lstm.save(lstm_keras_path)
+    try:
+        import tensorflow as tf
+        import tf2onnx
+        _spec = [tf.TensorSpec([None, config.LSTM_SEQ_LEN, len(feature_cols)], tf.float32,
+                               name="lstm_input")]
+        tf2onnx.convert.from_keras(lstm, input_signature=_spec, opset=17,
+                                   output_path=str(config.ARTIFACT_FILES["lstm"]))
+        logger.info("LSTM exported to %s", config.ARTIFACT_FILES["lstm"])
+    except ImportError:
+        logger.warning("tf2onnx not installed — .onnx export skipped. The app loads "
+                       "lstm_model.onnx, so run `pip install tf2onnx` and re-train "
+                       "before deploying.")
 
     with open(config.ARTIFACT_FILES["ensemble_weights"], "w") as f:
         json.dump({"rf": weights.rf, "xgb": weights.xgb, "lstm": weights.lstm,

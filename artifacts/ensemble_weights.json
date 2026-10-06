@@ -1,6 +1,6 @@
 {
-  "rf": 0.34,
-  "xgb": 0.05,
-  "lstm": 0.61,
-  "validation_sharpe": 2.794289439877176
+  "rf": 0.21,
+  "xgb": 0.51,
+  "lstm": 0.28,
+  "validation_sharpe": 2.8240963180449667
 }

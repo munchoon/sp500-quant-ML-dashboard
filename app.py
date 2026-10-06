@@ -216,7 +216,7 @@ with h_right:
         get_live_signal.clear()
         get_ohlc.clear()
         st.rerun()
-    st.caption(f"Model trained: {engine.metadata['trained_at_utc'][:16].replace('T',' ')} UTC")
+    st.caption(f"Refreshed: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC")
 
 if signal_error:
     st.warning(f"⚠️ Couldn't fetch a fresh live signal this session ({signal_error}). "
