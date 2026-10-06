@@ -239,7 +239,10 @@ ens = test_metrics["Ensemble"]
 # T-1 with the identical code path as today's signal), so it rolls forward
 # daily with no retraining. Falls back to the frozen training backtest tail
 # only if live inference failed this session.
-_pr = signal.previous if signal is not None else None
+# getattr (not signal.previous): a stale in-memory cache can hand us a
+# LiveSignal built before the `previous` field existed — fall back instead
+# of crashing the whole page.
+_pr = getattr(signal, "previous", None) if signal is not None else None
 if _pr is not None:
     _prev_sig, _prev_pred, _prev_conf = _pr.signal, _pr.predicted_return_pct, _pr.confidence_pct
     _prev_actual, _prev_hit = _pr.actual_return_pct, _pr.hit
