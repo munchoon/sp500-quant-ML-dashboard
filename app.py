@@ -7,8 +7,10 @@ once before this app has anything to load.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -124,13 +126,26 @@ def base_layout(**overrides) -> dict:
 # Cached loaders
 # ═════════════════════════════════════════════════════════════════════════
 
+# Hash of model_engine.py, referenced inside the cached loaders below so any
+# engine-shape change automatically busts stale in-memory caches on next run
+# (a stale cached engine otherwise silently serves objects missing new fields).
+_ENGINE_SRC_HASH = hashlib.sha256(
+    Path(model_engine.__file__).read_bytes()).hexdigest()
+
+
 @st.cache_resource(show_spinner="Loading trained model artifacts...")
-def load_engine() -> model_engine.ModelEngine:
+def load_engine(engine_src_hash: str = _ENGINE_SRC_HASH) -> model_engine.ModelEngine:
+    # engine_src_hash (a non-underscore arg, so its VALUE joins the cache key)
+    # auto-invalidates this cache whenever model_engine.py changes — a stale
+    # cached engine otherwise silently serves objects missing new fields.
     return model_engine.ModelEngine().load()
 
 
 @st.cache_resource(ttl=900, show_spinner="Fetching live market data and generating today's signal...")
-def get_live_signal(_engine: model_engine.ModelEngine, _cache_bust: str):
+def get_live_signal(_engine: model_engine.ModelEngine, _cache_bust: str,
+                    engine_src_hash: str = _ENGINE_SRC_HASH):
+    # engine_src_hash joins the cache key (see load_engine) for the same
+    # stale-object guard.
     # NOTE: cache_resource (not cache_data) — LiveSignal holds pandas/numpy
     # scalars that newer runtimes refuse to pickle, which broke page loads
     # with "Cannot serialize the return value". The object is read-only
