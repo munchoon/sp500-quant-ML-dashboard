@@ -129,8 +129,12 @@ def load_engine() -> model_engine.ModelEngine:
     return model_engine.ModelEngine().load()
 
 
-@st.cache_data(ttl=900, show_spinner="Fetching live market data and generating today's signal...")
+@st.cache_resource(ttl=900, show_spinner="Fetching live market data and generating today's signal...")
 def get_live_signal(_engine: model_engine.ModelEngine, _cache_bust: str):
+    # NOTE: cache_resource (not cache_data) — LiveSignal holds pandas/numpy
+    # scalars that newer runtimes refuse to pickle, which broke page loads
+    # with "Cannot serialize the return value". The object is read-only
+    # downstream (never mutated), so sharing it across reruns is safe.
     return _engine.predict_today()
 
 
