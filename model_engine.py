@@ -75,6 +75,7 @@ class LiveSignal:
     shap_today: Optional[dict] = field(default=None)  # {feature: shap_value}
     warnings: list[str] = field(default_factory=list)
     previous: Optional[PreviousSessionReview] = field(default=None)
+    trailing: Optional[pd.DataFrame] = field(default=None)  # live signals past the frozen backtest end
 
 
 class ModelEngine:
@@ -171,6 +172,28 @@ class ModelEngine:
         ]
         return ensemble_pred, components
 
+    def live_signals_since(self, df_with_regime: pd.DataFrame, since: pd.Timestamp,
+                           cap: int = 180) -> pd.DataFrame:
+        """Recompute ensemble signals for sessions after `since` (normally the
+        frozen backtest's end) using the identical scoring path as live
+        inference. Lets price charts show model markers on recent sessions
+        with no retraining; typically only a handful of dates, capped."""
+        idx = df_with_regime.index
+        dates = idx[idx > since][-cap:]
+        rows = []
+        for d in dates:
+            trunc = df_with_regime.iloc[:idx.get_loc(d)]
+            try:
+                live_row = data_fetcher.build_live_feature_row(trunc, self.feature_cols)
+                lstm_window = data_fetcher.build_live_lstm_sequence(trunc, self.feature_cols)
+                ensemble_pred, _ = self._score_frame(
+                    live_row, lstm_window, float(live_row["Regime_prob_lag1"]))
+            except Exception as exc:
+                logger.warning("Live trailing signal for %s failed (%s); skipped.", d.date(), exc)
+                continue
+            rows.append((d, ensemble_pred, 1 if ensemble_pred > 0 else -1))
+        return pd.DataFrame(rows, columns=["date", "Pred_Ensemble", "Ensemble_Signal"]).set_index("date")
+
     def _review_previous_session(self, df_with_regime: pd.DataFrame) -> tuple[Optional[PreviousSessionReview], Optional[str]]:
         """Score the frame ending the day BEFORE the last completed session —
         i.e. what the model called for the session that just closed — and pair
@@ -246,6 +269,8 @@ class ModelEngine:
         if previous_error:
             warnings.append(f"Previous-session review unavailable this run ({previous_error}) — showing backtest tail.")
 
+        trailing = self.live_signals_since(df_with_regime, self.backtest_df.index.max())
+
         return LiveSignal(
             as_of_date=as_of_date,
             target_session_label="next trading session",
@@ -261,6 +286,7 @@ class ModelEngine:
             shap_today=shap_today,
             warnings=warnings,
             previous=previous,
+            trailing=trailing,
         )
 
     def _confidence_score(self, ensemble_pred: float, components: list[ComponentPrediction]) -> float:

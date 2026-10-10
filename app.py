@@ -444,6 +444,13 @@ with tab_charts:
             name="S&P 500", increasing_line_color=COLORS["calm"], decreasing_line_color=COLORS["crisis"],
         ))
         overlay = bt_f.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
+        # Live recomputed signals for sessions past the frozen backtest end
+        # (getattr: tolerates stale cached signals predating the field).
+        _trail = getattr(signal, "trailing", None) if signal is not None else None
+        if _trail is not None and len(_trail):
+            _fresh = _trail.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
+            _fresh = _fresh[~_fresh.index.isin(overlay.index)]  # backtest wins overlaps
+            overlay = pd.concat([overlay, _fresh]).sort_index()
         longs = overlay[overlay["Ensemble_Signal"] == 1]
         shorts = overlay[overlay["Ensemble_Signal"] == -1]
         y_offset = ohlc_f["Low"].min() * 0.985
@@ -455,8 +462,8 @@ with tab_charts:
                                       marker=dict(symbol="triangle-down", color=COLORS["short"], size=7)))
         fig.update_layout(**PLOTLY_LAYOUT, height=420, xaxis_rangeslider_visible=True)
         st.plotly_chart(fig, width='stretch')
-        st.caption("Signal markers shown only for dates within the saved OOS test-period backtest; "
-                   "recent dates beyond the backtest window show price only.")
+        st.caption("Markers: backtest signals inside the saved OOS window, live recomputed "
+                   "signals for recent sessions past it; dates beyond both show price only.")
     except Exception as exc:
         st.info(f"Live candlestick unavailable this session ({exc}).")
 
