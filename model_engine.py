@@ -57,6 +57,7 @@ class PreviousSessionReview:
     confidence_pct: float
     actual_return_pct: float
     hit: bool
+    source: str = "recomputed"  # "recorded" (immutable morning log) | "recomputed" | "backtest"
 
 
 @dataclass
@@ -75,7 +76,6 @@ class LiveSignal:
     shap_today: Optional[dict] = field(default=None)  # {feature: shap_value}
     warnings: list[str] = field(default_factory=list)
     previous: Optional[PreviousSessionReview] = field(default=None)
-    trailing: Optional[pd.DataFrame] = field(default=None)  # live signals past the frozen backtest end
 
 
 class ModelEngine:
@@ -172,27 +172,34 @@ class ModelEngine:
         ]
         return ensemble_pred, components
 
-    def live_signals_since(self, df_with_regime: pd.DataFrame, since: pd.Timestamp,
-                           cap: int = 180) -> pd.DataFrame:
-        """Recompute ensemble signals for sessions after `since` (normally the
-        frozen backtest's end) using the identical scoring path as live
-        inference. Lets price charts show model markers on recent sessions
-        with no retraining; typically only a handful of dates, capped."""
-        idx = df_with_regime.index
-        dates = idx[idx > since][-cap:]
-        rows = []
-        for d in dates:
-            trunc = df_with_regime.iloc[:idx.get_loc(d)]
-            try:
-                live_row = data_fetcher.build_live_feature_row(trunc, self.feature_cols)
-                lstm_window = data_fetcher.build_live_lstm_sequence(trunc, self.feature_cols)
-                ensemble_pred, _ = self._score_frame(
-                    live_row, lstm_window, float(live_row["Regime_prob_lag1"]))
-            except Exception as exc:
-                logger.warning("Live trailing signal for %s failed (%s); skipped.", d.date(), exc)
-                continue
-            rows.append((d, ensemble_pred, 1 if ensemble_pred > 0 else -1))
-        return pd.DataFrame(rows, columns=["date", "Pred_Ensemble", "Ensemble_Signal"]).set_index("date")
+    def _review_from_log(self, df_with_regime: pd.DataFrame) -> Optional[PreviousSessionReview]:
+        """Review the last completed session from the RECORDED log: the log
+        row whose target session is the latest completed date. This is what
+        the page actually displayed that morning — immutable by construction."""
+        try:
+            log = self.load_signal_log()
+            if not len(log):
+                return None
+            session_date = df_with_regime.index.max()
+            hit = log.loc[log.index.normalize() == session_date.normalize()]
+            if not len(hit):
+                return None
+            r = hit.iloc[-1]
+            actual = float(df_with_regime["SP500_ret"].iloc[-1])
+            sig = "Long" if int(r["Ensemble_Signal"]) > 0 else "Short"
+            return PreviousSessionReview(
+                session_date=session_date,
+                sp500_close=float(df_with_regime["SP500"].iloc[-1]),
+                predicted_return_pct=float(r["Pred_Ensemble"]),
+                signal=sig,
+                confidence_pct=float(r["Confidence"]),
+                actual_return_pct=actual,
+                hit=(float(r["Pred_Ensemble"]) > 0) == (actual > 0),
+                source="recorded",
+            )
+        except Exception as exc:
+            logger.warning("Log-based review failed (%s).", exc)
+            return None
 
     def _review_previous_session(self, df_with_regime: pd.DataFrame) -> tuple[Optional[PreviousSessionReview], Optional[str]]:
         """Score the frame ending the day BEFORE the last completed session —
@@ -265,11 +272,11 @@ class ModelEngine:
             logger.warning("Live SHAP computation failed: %s", exc)
             warnings.append("Live SHAP explanation unavailable this run.")
 
-        previous, previous_error = self._review_previous_session(df_with_regime)
-        if previous_error:
-            warnings.append(f"Previous-session review unavailable this run ({previous_error}) — showing backtest tail.")
-
-        trailing = self.live_signals_since(df_with_regime, self.backtest_df.index.max())
+        previous = self._review_from_log(df_with_regime)
+        if previous is None:
+            previous, previous_error = self._review_previous_session(df_with_regime)
+            if previous_error:
+                warnings.append(f"Previous-session review unavailable this run ({previous_error}) — showing backtest tail.")
 
         return LiveSignal(
             as_of_date=as_of_date,
@@ -286,7 +293,6 @@ class ModelEngine:
             shap_today=shap_today,
             warnings=warnings,
             previous=previous,
-            trailing=trailing,
         )
 
     def _confidence_score(self, ensemble_pred: float, components: list[ComponentPrediction]) -> float:
@@ -307,11 +313,17 @@ class ModelEngine:
     @staticmethod
     def log_live_signal(signal: LiveSignal) -> None:
         """Append today's displayed call to the append-only signal log
-        (deduplicated by as_of_date). Best-effort: never raises."""
+        (deduplicated by as_of_date). A row is IMMUTABLE once written: it
+        records exactly what the page showed that morning, predicted from the
+        prior close, and is never overwritten by later data revisions or
+        retrains. Best-effort: never raises."""
         try:
             path = config.ARTIFACT_FILES["signal_log"]
+            as_of = pd.Timestamp(signal.as_of_date).date().isoformat()
+            target = (pd.Timestamp(signal.as_of_date) + pd.tseries.offsets.BDay(1)).date().isoformat()
             row = {
-                "as_of_date": pd.Timestamp(signal.as_of_date).date().isoformat(),
+                "as_of_date": as_of,
+                "target_date": target,
                 "sp500_close": signal.sp500_last_close,
                 "pred_ensemble": signal.predicted_return_pct,
                 "signal": 1 if signal.signal == "Long" else -1,
@@ -320,7 +332,7 @@ class ModelEngine:
             }
             if path.exists():
                 existing = pd.read_csv(path, dtype={"as_of_date": str})
-                if row["as_of_date"] in set(existing["as_of_date"]):
+                if as_of in set(existing["as_of_date"].astype(str)):
                     return
                 pd.concat([existing, pd.DataFrame([row])]).to_csv(path, index=False)
             else:
@@ -330,16 +342,24 @@ class ModelEngine:
 
     @staticmethod
     def load_signal_log() -> pd.DataFrame:
-        """Recorded morning calls (may be empty). Indexed by as_of_date."""
+        """Recorded morning calls indexed by TARGET session date (the session
+        each call predicts). Rows predating the target_date column are
+        migrated as as_of_date + 1 business day."""
         try:
             path = config.ARTIFACT_FILES["signal_log"]
             if not path.exists():
                 return pd.DataFrame(columns=["Pred_Ensemble", "Ensemble_Signal"])
             df = pd.read_csv(path, dtype={"as_of_date": str})
+            if "target_date" in df.columns:
+                targets = pd.to_datetime(df["target_date"].astype(str))
+            else:
+                targets = pd.to_datetime(df["as_of_date"].astype(str)) + pd.tseries.offsets.BDay(1)
             out = pd.DataFrame({
                 "Pred_Ensemble": df["pred_ensemble"].astype(float).to_numpy(),
                 "Ensemble_Signal": df["signal"].astype(int).to_numpy(),
-            }, index=pd.to_datetime(df["as_of_date"]))
+                "Confidence": df["confidence_pct"].astype(float).to_numpy()
+                if "confidence_pct" in df.columns else np.full(len(df), float("nan")),
+            }, index=pd.DatetimeIndex(targets))
             out.index.name = "date"
             return out[~out.index.duplicated(keep="last")].sort_index()
         except Exception as exc:

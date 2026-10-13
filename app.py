@@ -252,10 +252,8 @@ test_metrics = engine.get_test_period_metrics()
 ens = test_metrics["Ensemble"]
 
 # ── Previous completed session: what the model called vs. what happened ──
-# Live-computed every page load (signal.previous, scored from data through
-# T-1 with the identical code path as today's signal), so it rolls forward
-# daily with no retraining. Falls back to the frozen training backtest tail
-# only if live inference failed this session.
+# Priority: RECORDED morning call from the immutable signal log (rolls daily,
+# never revised) → recomputed estimate → frozen backtest tail.
 # getattr (not signal.previous): a stale in-memory cache can hand us a
 # LiveSignal built before the `previous` field existed — fall back instead
 # of crashing the whole page.
@@ -263,12 +261,13 @@ _pr = getattr(signal, "previous", None) if signal is not None else None
 if _pr is not None:
     _prev_sig, _prev_pred, _prev_conf = _pr.signal, _pr.predicted_return_pct, _pr.confidence_pct
     _prev_actual, _prev_hit = _pr.actual_return_pct, _pr.hit
-    _prev_date, _prev_close, _prev_live = _pr.session_date, _pr.sp500_close, True
+    _prev_date, _prev_close = _pr.session_date, _pr.sp500_close
+    _prev_source = getattr(_pr, "source", "recomputed")
     _prev = True
 else:
     _prev = engine.backtest_df.iloc[-1] if len(engine.backtest_df) else None
-    _prev_live = False
-if _prev is not None and not _prev_live:
+    _prev_source = "backtest"
+if _prev is not None and _prev_source == "backtest":
     _prev_pred = float(_prev["Pred_Ensemble"])
     _prev_sig = "Long" if _prev_pred > 0 else "Short"
     _prev_actual = float(_prev["Actual_Return"])
@@ -299,9 +298,9 @@ with k2:
         kpi_card("Market Regime", "—", "unavailable")
 with k3:
     if _prev is not None:
+        _tag = {"recorded": "· recorded", "recomputed": "· estimated"}.get(_prev_source, "· backtest")
         kpi_card("Previous call — model predicted", signal_badge(_prev_sig),
-                  f"{_prev_date.date()} · pred {_prev_pred:+.4f}% · confidence {_prev_conf:.0f}%"
-                  + (" · live" if _prev_live else " · backtest"))
+                  f"{_prev_date.date()} · pred {_prev_pred:+.4f}% · confidence {_prev_conf:.0f}%{_tag}")
     else:
         kpi_card("Previous call — model predicted", "—", "unavailable")
 with k4:
@@ -445,24 +444,18 @@ with tab_charts:
             x=ohlc_f.index, open=ohlc_f["Open"], high=ohlc_f["High"], low=ohlc_f["Low"], close=ohlc_f["Close"],
             name="S&P 500", increasing_line_color=COLORS["calm"], decreasing_line_color=COLORS["crisis"],
         ))
-        # Marker priority: frozen backtest > RECORDED morning calls > recomputed.
-        # (getattr: tolerates stale cached signals predating the fields.)
+        # Marker priority: frozen backtest > RECORDED morning calls from the
+        # immutable signal log (plotted at their target session). No
+        # recomputed markers: reconstructions use revised data + retrained
+        # models and must never overwrite recorded history.
         overlay = bt_f.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
         _log = engine.load_signal_log()
         if len(_log):
             _rec = _log.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
             _rec = _rec[~_rec.index.isin(overlay.index)]
             overlay = pd.concat([overlay, _rec]).sort_index()
-        _trail = getattr(signal, "trailing", None) if signal is not None else None
-        _trail_only = pd.DataFrame()
-        if _trail is not None and len(_trail):
-            _fresh = _trail.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
-            _trail_only = _fresh[~_fresh.index.isin(overlay.index)]
-            overlay = pd.concat([overlay, _trail_only]).sort_index()
         longs = overlay[overlay["Ensemble_Signal"] == 1]
         shorts = overlay[overlay["Ensemble_Signal"] == -1]
-        trail_longs = _trail_only[_trail_only["Ensemble_Signal"] == 1] if len(_trail_only) else _trail_only
-        trail_shorts = _trail_only[_trail_only["Ensemble_Signal"] == -1] if len(_trail_only) else _trail_only
         y_offset = ohlc_f["Low"].min() * 0.985
         if len(longs):
             fig.add_trace(go.Scatter(x=longs.index, y=[y_offset] * len(longs), mode="markers", name="Long signal",
@@ -470,19 +463,11 @@ with tab_charts:
         if len(shorts):
             fig.add_trace(go.Scatter(x=shorts.index, y=[y_offset] * len(shorts), mode="markers", name="Short signal",
                                       marker=dict(symbol="triangle-down", color=COLORS["short"], size=7)))
-        if len(trail_longs):
-            fig.add_trace(go.Scatter(x=trail_longs.index, y=[y_offset] * len(trail_longs), mode="markers",
-                                      name="Long (recomputed)",
-                                      marker=dict(symbol="triangle-up-open", color=COLORS["long"], size=8)))
-        if len(trail_shorts):
-            fig.add_trace(go.Scatter(x=trail_shorts.index, y=[y_offset] * len(trail_shorts), mode="markers",
-                                      name="Short (recomputed)",
-                                      marker=dict(symbol="triangle-down-open", color=COLORS["short"], size=8)))
         fig.update_layout(**PLOTLY_LAYOUT, height=420, xaxis_rangeslider_visible=True)
         st.plotly_chart(fig, width='stretch')
-        st.caption("Solid markers: backtest signals inside the saved OOS window plus RECORDED "
-                   "morning calls after it. Hollow markers: recomputed with current models/finalized "
-                   "data — indicative only, morning calls may have differed (data gets revised).")
+        st.caption("Markers: backtest signals inside the saved OOS window plus RECORDED "
+                   "morning calls after it (immutable — never revised). A session with no marker "
+                   "means no call was recorded that morning.")
     except Exception as exc:
         st.info(f"Live candlestick unavailable this session ({exc}).")
 

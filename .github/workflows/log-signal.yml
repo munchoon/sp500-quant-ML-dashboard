@@ -1,0 +1,42 @@
+name: Record daily signal
+
+# Pre-market signal logging: records each session's call before the 09:30 ET
+# open into artifacts/signal_log.csv (the dashboard's immutable marker source).
+# Runs 12:30 UTC Mon–Fri (08:30 ET). Manual runs supported via workflow_dispatch.
+# Requires repo secret FRED_API_KEY. Commits with GITHUB_TOKEN (needs
+# Actions → General → Workflow permissions: Read and write).
+
+on:
+  schedule:
+    - cron: "30 12 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-signal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Record today's signal
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python log_today.py
+
+      - name: Commit signal log
+        run: |
+          git config user.name "signal-bot"
+          git config user.email "signal-bot@users.noreply.github.com"
+          git add artifacts/signal_log.csv
+          git diff --cached --quiet || git commit -m "Daily signal log $(date -u +%F)"
+          git push
