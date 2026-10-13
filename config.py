@@ -33,10 +33,10 @@ ARTIFACT_DIR.mkdir(exist_ok=True)
 def get_fred_api_key() -> str:
     key = os.environ.get("FRED_API_KEY")
     if key:
-        return key
+        return key.strip()
     try:
         import streamlit as st  # local import: config.py must stay importable without streamlit
-        return st.secrets["FRED_API_KEY"]
+        return str(st.secrets["FRED_API_KEY"]).strip()
     except Exception:
         raise RuntimeError(
             "FRED_API_KEY not found. Set it as an environment variable, a "
