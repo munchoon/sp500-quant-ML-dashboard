@@ -194,7 +194,7 @@ class ModelEngine:
                 signal=sig,
                 confidence_pct=float(r["Confidence"]),
                 actual_return_pct=actual,
-                hit=(float(r["Pred_Ensemble"]) > 0) == (actual > 0),
+                hit=(sig == "Long") == (actual > 0),
                 source="recorded",
             )
         except Exception as exc:

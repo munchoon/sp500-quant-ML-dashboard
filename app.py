@@ -299,8 +299,10 @@ with k2:
 with k3:
     if _prev is not None:
         _tag = {"recorded": "· recorded", "recomputed": "· estimated"}.get(_prev_source, "· backtest")
+        _pred_txt = f"{_prev_pred:+.4f}%" if np.isfinite(_prev_pred) else "—"
+        _conf_txt = f"{_prev_conf:.0f}%" if np.isfinite(_prev_conf) else "—"
         kpi_card("Previous call — model predicted", signal_badge(_prev_sig),
-                  f"{_prev_date.date()} · pred {_prev_pred:+.4f}% · confidence {_prev_conf:.0f}%{_tag}")
+                  f"{_prev_date.date()} · pred {_pred_txt} · confidence {_conf_txt}{_tag}")
     else:
         kpi_card("Previous call — model predicted", "—", "unavailable")
 with k4:
