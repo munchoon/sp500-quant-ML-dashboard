@@ -253,4 +253,10 @@ ARTIFACT_FILES = {
     "training_history": ARTIFACT_DIR / "lstm_training_history.json",
     "metadata": ARTIFACT_DIR / "metadata.json",
     "raw_dataset_cache": ARTIFACT_DIR / "daily_dataset_cache.parquet",
+    # Append-only log of live signals exactly as displayed each morning
+    # (as_of_date, prediction, signal...). The chart prefers these RECORDED
+    # calls for post-backtest dates; recomputed trailing signals are only a
+    # labelled fallback, since reconstructions use revised data + retrained
+    # models and can differ from what was actually shown.
+    "signal_log": ARTIFACT_DIR / "signal_log.csv",
 }

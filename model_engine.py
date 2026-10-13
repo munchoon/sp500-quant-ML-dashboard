@@ -304,6 +304,48 @@ class ModelEngine:
     def get_test_period_metrics(self) -> dict:
         return self.metadata["test_period_metrics"]
 
+    @staticmethod
+    def log_live_signal(signal: LiveSignal) -> None:
+        """Append today's displayed call to the append-only signal log
+        (deduplicated by as_of_date). Best-effort: never raises."""
+        try:
+            path = config.ARTIFACT_FILES["signal_log"]
+            row = {
+                "as_of_date": pd.Timestamp(signal.as_of_date).date().isoformat(),
+                "sp500_close": signal.sp500_last_close,
+                "pred_ensemble": signal.predicted_return_pct,
+                "signal": 1 if signal.signal == "Long" else -1,
+                "confidence_pct": signal.confidence_pct,
+                "regime": signal.regime_label,
+            }
+            if path.exists():
+                existing = pd.read_csv(path, dtype={"as_of_date": str})
+                if row["as_of_date"] in set(existing["as_of_date"]):
+                    return
+                pd.concat([existing, pd.DataFrame([row])]).to_csv(path, index=False)
+            else:
+                pd.DataFrame([row]).to_csv(path, index=False)
+        except Exception as exc:
+            logger.warning("Signal logging failed (%s).", exc)
+
+    @staticmethod
+    def load_signal_log() -> pd.DataFrame:
+        """Recorded morning calls (may be empty). Indexed by as_of_date."""
+        try:
+            path = config.ARTIFACT_FILES["signal_log"]
+            if not path.exists():
+                return pd.DataFrame(columns=["Pred_Ensemble", "Ensemble_Signal"])
+            df = pd.read_csv(path, dtype={"as_of_date": str})
+            out = pd.DataFrame({
+                "Pred_Ensemble": df["pred_ensemble"].astype(float).to_numpy(),
+                "Ensemble_Signal": df["signal"].astype(int).to_numpy(),
+            }, index=pd.to_datetime(df["as_of_date"]))
+            out.index.name = "date"
+            return out[~out.index.duplicated(keep="last")].sort_index()
+        except Exception as exc:
+            logger.warning("Signal log load failed (%s).", exc)
+            return pd.DataFrame(columns=["Pred_Ensemble", "Ensemble_Signal"])
+
     def get_thesis_reference(self) -> tuple[dict, dict]:
         return self.metadata["thesis_reference_weights"], self.metadata["thesis_reference_metrics"]
 

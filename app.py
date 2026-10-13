@@ -217,6 +217,8 @@ cache_bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")  # refreshes h
 signal_error = None
 try:
     signal = get_live_signal(engine, cache_bucket)
+    if signal is not None:
+        engine.log_live_signal(signal)  # record exactly what was displayed
 except Exception as exc:
     signal_error = str(exc)
     signal = None
@@ -443,16 +445,24 @@ with tab_charts:
             x=ohlc_f.index, open=ohlc_f["Open"], high=ohlc_f["High"], low=ohlc_f["Low"], close=ohlc_f["Close"],
             name="S&P 500", increasing_line_color=COLORS["calm"], decreasing_line_color=COLORS["crisis"],
         ))
+        # Marker priority: frozen backtest > RECORDED morning calls > recomputed.
+        # (getattr: tolerates stale cached signals predating the fields.)
         overlay = bt_f.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
-        # Live recomputed signals for sessions past the frozen backtest end
-        # (getattr: tolerates stale cached signals predating the field).
+        _log = engine.load_signal_log()
+        if len(_log):
+            _rec = _log.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
+            _rec = _rec[~_rec.index.isin(overlay.index)]
+            overlay = pd.concat([overlay, _rec]).sort_index()
         _trail = getattr(signal, "trailing", None) if signal is not None else None
+        _trail_only = pd.DataFrame()
         if _trail is not None and len(_trail):
             _fresh = _trail.reindex(ohlc_f.index).dropna(subset=["Ensemble_Signal"])
-            _fresh = _fresh[~_fresh.index.isin(overlay.index)]  # backtest wins overlaps
-            overlay = pd.concat([overlay, _fresh]).sort_index()
+            _trail_only = _fresh[~_fresh.index.isin(overlay.index)]
+            overlay = pd.concat([overlay, _trail_only]).sort_index()
         longs = overlay[overlay["Ensemble_Signal"] == 1]
         shorts = overlay[overlay["Ensemble_Signal"] == -1]
+        trail_longs = _trail_only[_trail_only["Ensemble_Signal"] == 1] if len(_trail_only) else _trail_only
+        trail_shorts = _trail_only[_trail_only["Ensemble_Signal"] == -1] if len(_trail_only) else _trail_only
         y_offset = ohlc_f["Low"].min() * 0.985
         if len(longs):
             fig.add_trace(go.Scatter(x=longs.index, y=[y_offset] * len(longs), mode="markers", name="Long signal",
@@ -460,10 +470,19 @@ with tab_charts:
         if len(shorts):
             fig.add_trace(go.Scatter(x=shorts.index, y=[y_offset] * len(shorts), mode="markers", name="Short signal",
                                       marker=dict(symbol="triangle-down", color=COLORS["short"], size=7)))
+        if len(trail_longs):
+            fig.add_trace(go.Scatter(x=trail_longs.index, y=[y_offset] * len(trail_longs), mode="markers",
+                                      name="Long (recomputed)",
+                                      marker=dict(symbol="triangle-up-open", color=COLORS["long"], size=8)))
+        if len(trail_shorts):
+            fig.add_trace(go.Scatter(x=trail_shorts.index, y=[y_offset] * len(trail_shorts), mode="markers",
+                                      name="Short (recomputed)",
+                                      marker=dict(symbol="triangle-down-open", color=COLORS["short"], size=8)))
         fig.update_layout(**PLOTLY_LAYOUT, height=420, xaxis_rangeslider_visible=True)
         st.plotly_chart(fig, width='stretch')
-        st.caption("Markers: backtest signals inside the saved OOS window, live recomputed "
-                   "signals for recent sessions past it; dates beyond both show price only.")
+        st.caption("Solid markers: backtest signals inside the saved OOS window plus RECORDED "
+                   "morning calls after it. Hollow markers: recomputed with current models/finalized "
+                   "data — indicative only, morning calls may have differed (data gets revised).")
     except Exception as exc:
         st.info(f"Live candlestick unavailable this session ({exc}).")
 
