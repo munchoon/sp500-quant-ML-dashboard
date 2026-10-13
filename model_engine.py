@@ -329,6 +329,7 @@ class ModelEngine:
                 "signal": 1 if signal.signal == "Long" else -1,
                 "confidence_pct": signal.confidence_pct,
                 "regime": signal.regime_label,
+                "origin": "live",
             }
             if path.exists():
                 existing = pd.read_csv(path, dtype={"as_of_date": str})

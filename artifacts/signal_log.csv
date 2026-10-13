@@ -1,2 +1,4 @@
-as_of_date,sp500_close,pred_ensemble,signal,confidence_pct,regime
-2026-10-12,7807.240234375,-0.046680366654366826,-1,59.77611129225083,Calm
+as_of_date,target_date,sp500_close,pred_ensemble,signal,confidence_pct,regime,origin
+2026-10-05,2026-10-06,7773.95,-0.0428,-1,38,Calm,backfill
+2026-10-06,2026-10-07,7818.93,-0.0266,-1,30,Calm,backfill
+2026-10-12,2026-10-13,7807.240234375,-0.046680366654366826,-1,59.77611129225083,Calm,live
