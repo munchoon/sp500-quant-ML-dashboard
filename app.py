@@ -470,6 +470,61 @@ with tab_charts:
         st.caption("Markers: backtest signals inside the saved OOS window plus RECORDED "
                    "morning calls after it (immutable — never revised). A session with no marker "
                    "means no call was recorded that morning.")
+
+        st.markdown('<div class="section-title">Personal Tips — streak rules</div>', unsafe_allow_html=True)
+        _TIP_GREEN_RUN = 5  # red after this many+ straight greens = take profit
+        _TIP_ENTRY_RUN = 3  # this many fresh greens after red = long entry
+        _tip_seq = overlay.dropna(subset=["Ensemble_Signal"]).tail(15)
+        if len(_tip_seq) == 0:
+            st.info("No recorded signals in range — no tip.")
+        else:
+            # Walk back from the latest marker; a gap of 2+ trading sessions
+            # restarts the count (covers single holidays/missed recordings).
+            _dates = _tip_seq.index.tolist()
+            _vals = _tip_seq["Ensemble_Signal"].astype(int).tolist()
+            _streak, _streak_start = [_vals[-1]], 0
+            for _i in range(len(_vals) - 2, -1, -1):
+                if _dates[_i] + pd.tseries.offsets.BDay(2) >= _dates[_i + 1] \
+                        and _vals[_i] == _streak[0]:
+                    _streak.insert(0, _vals[_i])
+                else:
+                    _streak_start = _i + 1
+                    break
+            else:
+                _streak_start = 0
+            _last_date = _dates[-1].date()
+            _red_before = _vals[_streak_start - 1] == -1 if _streak_start > 0 else None
+            if _streak[0] == -1 and len(_streak) >= 1 and _streak_start > 0:
+                _greens_before = 0
+                for _v in reversed(_vals[:_streak_start]):
+                    if _v == 1:
+                        _greens_before += 1
+                    else:
+                        break
+                if _greens_before >= _TIP_GREEN_RUN:
+                    st.markdown(f"🔴 **Take profit** — first red ({_dates[_streak_start].date()}) after "
+                                f"{_greens_before} straight greens. Consider closing longs.")
+                else:
+                    st.markdown(f"➖ No trigger — Short since {_last_date} "
+                                f"(only {_greens_before} green(s) before it; needs {_TIP_GREEN_RUN}+ for the "
+                                f"take-profit rule). Fresh long entry needs {_TIP_ENTRY_RUN} straight greens.")
+            elif _streak[0] == 1 and len(_streak) >= _TIP_ENTRY_RUN and _red_before:
+                st.markdown(f"🟢 **Long entry** — {len(_streak)} consecutive greens after red "
+                            f"(latest {_last_date}).")
+            elif _streak[0] == 1:
+                _need = _TIP_ENTRY_RUN - len(_streak)
+                if _red_before:
+                    st.markdown(f"➖ {_need} more green(s) for the entry trigger "
+                                f"(currently {len(_streak)} straight greens, latest {_last_date}).")
+                else:
+                    st.markdown(f"➖ Long run in progress ({len(_streak)} straight greens, latest "
+                                f"{_last_date}) — started before this window, no fresh red-to-green flip.")
+            else:
+                st.markdown(f"➖ No trigger — Short since {_last_date}. Fresh long entry needs "
+                            f"{_TIP_ENTRY_RUN} straight greens.")
+            st.caption(f"Rules: sell/take profit on first red after {_TIP_GREEN_RUN}+ greens; "
+                       f"long only after {_TIP_ENTRY_RUN} straight greens following red. "
+                       f"Computed from recorded markers only; a 2+ session gap restarts the count.")
     except Exception as exc:
         st.info(f"Live candlestick unavailable this session ({exc}).")
 
